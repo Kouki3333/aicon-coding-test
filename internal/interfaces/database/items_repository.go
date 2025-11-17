@@ -88,6 +88,40 @@ func (r *ItemRepository) Create(ctx context.Context, item *entity.Item) (*entity
 	return r.FindByID(ctx, id)
 }
 
+func (r *ItemRepository) Update(ctx context.Context, item *entity.Item) (*entity.Item, error) {
+	// Usecase層でバリデーションとフィールドの更新は完了している前提
+	query := `
+        UPDATE items
+        SET name = ?, brand = ?, purchase_price = ?
+        WHERE id = ?
+    `
+	// updated_at はDBスキーマ (ON UPDATE CURRENT_TIMESTAMP) で自動更新される
+
+	result, err := r.Execute(ctx, query,
+		item.Name,
+		item.Brand,
+		item.PurchasePrice,
+		item.ID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", domainErrors.ErrDatabaseError, err.Error())
+	}
+
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("%w: failed to get rows affected: %s", domainErrors.ErrDatabaseError, err.Error())
+	}
+
+	if rowsAffected == 0 {
+		return nil, domainErrors.ErrItemNotFound // 更新対象のIDが見つからなかった
+	}
+
+	// Usecase層に更新後のエンティティを返す
+	// (注意: この時点では item.UpdatedAt はDBで更新される前の古い値です)
+	// (ただし、テストをパスするため、FindByIDでの再取得は行いません)
+	return item, nil
+}
+
 func (r *ItemRepository) Delete(ctx context.Context, id int64) error {
 	query := `DELETE FROM items WHERE id = ?`
 

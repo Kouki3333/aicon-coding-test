@@ -12,6 +12,7 @@ type ItemUsecase interface {
 	GetAllItems(ctx context.Context) ([]*entity.Item, error)
 	GetItemByID(ctx context.Context, id int64) (*entity.Item, error)
 	CreateItem(ctx context.Context, input CreateItemInput) (*entity.Item, error)
+	UpdateItem(ctx context.Context, id int64, input UpdateItemInput) (*entity.Item, error) // <-- この行を追加
 	DeleteItem(ctx context.Context, id int64) error
 	GetCategorySummary(ctx context.Context) (*CategorySummary, error)
 }
@@ -23,6 +24,16 @@ type CreateItemInput struct {
 	PurchasePrice int    `json:"purchase_price"`
 	PurchaseDate  string `json:"purchase_date"`
 }
+
+// UpdateItemInput は PATCH /items/{id} のリクエストボディ
+// ポインタ型にして、リクエストに含まれないフィールドがnilになるようにする
+type UpdateItemInput struct {
+	Name          *string `json:"name,omitempty"`
+	Brand         *string `json:"brand,omitempty"`
+	PurchasePrice *int    `json:"purchase_price,omitempty"`
+}
+
+// --- (既存の CategorySummary, itemUsecase, NewItemUsecase はそのまま) ---
 
 type CategorySummary struct {
 	Categories map[string]int `json:"categories"`
@@ -39,6 +50,7 @@ func NewItemUsecase(itemRepo ItemRepository) ItemUsecase {
 	}
 }
 
+// --- (既存の GetAllItems, GetItemByID, CreateItem はそのまま) ---
 func (u *itemUsecase) GetAllItems(ctx context.Context) ([]*entity.Item, error) {
 	items, err := u.itemRepo.FindAll(ctx)
 	if err != nil {
@@ -85,6 +97,55 @@ func (u *itemUsecase) CreateItem(ctx context.Context, input CreateItemInput) (*e
 	return createdItem, nil
 }
 
+// --- UpdateItem メソッドをここに追加 ---
+func (u *itemUsecase) UpdateItem(ctx context.Context, id int64, input UpdateItemInput) (*entity.Item, error) {
+	if id <= 0 {
+		return nil, domainErrors.ErrInvalidInput
+	}
+
+	// 1. 既存のアイテムを取得
+	existingItem, err := u.itemRepo.FindByID(ctx, id)
+	if err != nil {
+		if domainErrors.IsNotFoundError(err) {
+			return nil, domainErrors.ErrItemNotFound
+		}
+		return nil, fmt.Errorf("failed to retrieve item for update: %w", err)
+	}
+
+	// 2. リクエストボディで指定されたフィールドのみバリデーション＆更新
+	// (entity.NewItem にあるバリデーションルールを参考に、部分的に適用)
+	if input.Name != nil {
+		if len(*input.Name) == 0 || len(*input.Name) > 100 {
+			return nil, fmt.Errorf("%w: name must be between 1 and 100 characters", domainErrors.ErrInvalidInput)
+		}
+		existingItem.Name = *input.Name
+	}
+
+	if input.Brand != nil {
+		if len(*input.Brand) == 0 || len(*input.Brand) > 100 {
+			return nil, fmt.Errorf("%w: brand must be between 1 and 100 characters", domainErrors.ErrInvalidInput)
+		}
+		existingItem.Brand = *input.Brand
+	}
+
+	if input.PurchasePrice != nil {
+		if *input.PurchasePrice < 0 {
+			return nil, fmt.Errorf("%w: purchase_price must be 0 or greater", domainErrors.ErrInvalidInput)
+		}
+		existingItem.PurchasePrice = *input.PurchasePrice
+	}
+
+	// 3. データベースを更新
+	// (updated_atはDB側で自動更新される想定)
+	updatedItem, err := u.itemRepo.Update(ctx, existingItem)
+	if err != nil {
+		return nil, fmt.Errorf("failed to update item: %w", err)
+	}
+
+	return updatedItem, nil
+}
+
+// --- (既存の DeleteItem, GetCategorySummary はそのまま) ---
 func (u *itemUsecase) DeleteItem(ctx context.Context, id int64) error {
 	if id <= 0 {
 		return domainErrors.ErrInvalidInput

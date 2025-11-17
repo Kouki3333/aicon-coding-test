@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors" // <-- Go 1.13+ の errors をインポート
 	"net/http"
 	"strconv"
 
@@ -26,6 +27,7 @@ type ErrorResponse struct {
 	Details []string `json:"details,omitempty"`
 }
 
+// --- (既存の GetItems, GetItem, CreateItem はそのまま) ---
 func (h *ItemHandler) GetItems(c echo.Context) error {
 	items, err := h.itemUsecase.GetAllItems(c.Request().Context())
 	if err != nil {
@@ -93,6 +95,49 @@ func (h *ItemHandler) CreateItem(c echo.Context) error {
 	return c.JSON(http.StatusCreated, item)
 }
 
+// --- UpdateItem ハンドラーをここに追加 ---
+func (h *ItemHandler) UpdateItem(c echo.Context) error {
+	// 1. IDのパース
+	idStr := c.Param("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error: "invalid item ID",
+		})
+	}
+
+	// 2. リクエストボディのバインド (Usecaseパッケージで定義した型を使う)
+	var input usecase.UpdateItemInput
+	if err := c.Bind(&input); err != nil {
+		return c.JSON(http.StatusBadRequest, ErrorResponse{
+			Error: "invalid request format",
+		})
+	}
+
+	// 3. Usecaseの呼び出し
+	item, err := h.itemUsecase.UpdateItem(c.Request().Context(), id, input)
+	if err != nil {
+		// エラーハンドリング (既存のハンドラーを参考)
+		if errors.Is(err, domainErrors.ErrItemNotFound) { // errors.Is を使用
+			return c.JSON(http.StatusNotFound, ErrorResponse{
+				Error: "item not found",
+			})
+		}
+		if errors.Is(err, domainErrors.ErrInvalidInput) { // errors.Is を使用
+			return c.JSON(http.StatusBadRequest, ErrorResponse{
+				Error:   "validation failed",
+				Details: []string{err.Error()},
+			})
+		}
+		return c.JSON(http.StatusInternalServerError, ErrorResponse{
+			Error: "failed to update item",
+		})
+	}
+
+	return c.JSON(http.StatusOK, item)
+}
+
+// --- (既存の DeleteItem, GetSummary, validateCreateItemInput はそのまま) ---
 func (h *ItemHandler) DeleteItem(c echo.Context) error {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 64)
